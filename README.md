@@ -3,5 +3,5 @@ Intended to copy objects quickly and simply. It creates a constructor at runtime
 
 
 Bugs identified to fix
-- [#] Above 2 levels, with circular reference, does not copy.
+- [X] Above 2 levels, with circular reference, does not copy.
 - [ ] Complete implementation of ExpressionPrinter
