@@ -19,34 +19,123 @@ namespace ObjectCloner
     internal class DynamicConstructorAssembler
     {
 
-        int MAX_LEVELS = 4;
-
         public static DynamicConstructorInfo Create(Type baseType)
         {
-            int level = 0;
+            PredefineAllTypes(baseType);
+            GenerateAllIL();
+            FinalizeAllTypes();
 
-            DynamicConstructorInfo dtype = null;
-            if (TypeBuilders.TryGetValue(baseType, out dtype))
-            {
-                if (dtype.BuildedType != null)
-                {
-                    return dtype;
-                }
-            }
-            else
-            {
-                dtype = DefineConstructor(baseType);
-            }
+            var typeInfo = GetTypeInfo(baseType);
 
-            ILGenerator il = dtype.Constructor.GetILGenerator();
+            return typeInfo;
 
-            EmitObject(il, baseType, level);
 
-            dtype.BuildedType = dtype.Builder.CreateType();
-            return dtype;
+            //var dtype = DefineConstructor(baseType);
+            //PredefineTypes(baseType);
+
+            //var il = dtype.Constructor.GetILGenerator();
+
+            //EmitObject(il, baseType);
+
+            //dtype.BuildedType = dtype.Builder.CreateType();
+            //return dtype;
         }
 
-        private static void EmitObject(ILGenerator il, Type baseType, int level)
+
+        public static DynamicConstructorInfo GetTypeInfo(Type baseType)
+        {
+            if (!TypeBuilders.TryGetValue(baseType, out var typeInfo))
+            {
+                throw new InvalidOperationException("Tipo não pré-definido: " + baseType.Name);
+            }
+            return typeInfo;
+        }
+
+        public static void FinalizeAllTypes()
+        {
+            foreach (var dtype in TypeBuilders.Values)
+            {
+                dtype.BuildedType = dtype.Builder.CreateType();
+            }
+        }
+
+        public static void PredefineAllTypes(Type baseType)
+        {
+            if (!TypeBuilders.ContainsKey(baseType))
+            {
+                DefineConstructor(baseType);
+                PredefineTypes(baseType);
+            }
+        }
+
+        private static void PredefineTypes(Type baseType)
+        {
+            var properties = baseType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            foreach (var property in properties)
+            {
+                Type propType = property.PropertyType;
+                if (propType.IsClass && propType != typeof(string))
+                {
+                    if (propType.IsArray)
+                    {
+                        Type itemType = propType.GetElementType();
+                        if (!TypeBuilders.ContainsKey(itemType))
+                        {
+                            DefineConstructor(itemType);
+                            PredefineTypes(itemType);
+                            //Create(itemType);
+                        }
+                    }
+                    else if (propType.IsGenericType && propType.GetGenericTypeDefinition() == typeof(List<>))
+                    {
+                        Type itemType = propType.GetGenericArguments()[0];
+                        if (!TypeBuilders.ContainsKey(itemType))
+                        {
+                            DefineConstructor(itemType);
+                            PredefineTypes(itemType);
+                            //Create(itemType);
+                        }
+                    }
+                    else if (!propType.Namespace.StartsWith("System") && !propType.Namespace.StartsWith("Microsoft"))
+                    {
+                        if (!TypeBuilders.ContainsKey(propType))
+                        {
+                            DefineConstructor(propType);
+                            PredefineTypes(propType);
+                            //Create(propType);
+                        }
+                    }
+                }
+            }
+        }
+
+
+        public static void GenerateAllIL()
+        {
+            foreach (var dtype in TypeBuilders.Values)
+            {
+                ILGenerator il = dtype.Constructor.GetILGenerator();
+                EmitObject(il, dtype.OriginalType);
+            }
+        }
+
+        internal static DynamicConstructorInfo DefineConstructor(Type baseType)
+        {
+            if (TypeBuilders.TryGetValue(baseType, out DynamicConstructorInfo tt)) return tt;
+
+            var builder = Module.DefineType(baseType.Name + "_Dynamic", TypeAttributes.Public, baseType);
+
+            var dci = new DynamicConstructorInfo()
+            {
+                Builder = builder,
+                OriginalType = baseType,
+                Constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { baseType })
+            };
+            TypeBuilders.Add(baseType, dci);
+            return dci;
+        }
+
+        private static void EmitObject(ILGenerator il, Type baseType)
         {
             Label notNullLabel = il.DefineLabel();
             // if (obj != null)
@@ -57,7 +146,9 @@ namespace ObjectCloner
             il.MarkLabel(notNullLabel);
 
             var properties = baseType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-            foreach (PropertyInfo property in properties)
+            var ordered    = properties.OrderBy(a => a.PropertyType.IsClass && a.PropertyType != typeof(string));
+
+            foreach (PropertyInfo property in ordered)
             {
                 if (!property.CanWrite) continue;
                 MethodInfo getMethod = property.GetGetMethod();
@@ -98,11 +189,13 @@ namespace ObjectCloner
         {
             var baset = property.PropertyType;
 
-            DynamicConstructorInfo b1 = null;
-            if (!TypeBuilders.TryGetValue(baset, out b1))
-            {
-                b1 = DefineConstructor(baset);
-            }
+            var b1 = TypeBuilders[baset];
+            //DynamicConstructorInfo b1 = null;
+            //if (!TypeBuilders.TryGetValue(baset, out b1))
+            //{
+            //    throw new InvalidOperationException("Tipo não pré-definido: " + baset.Name);
+            //    //b1 = DefineConstructor(baset);
+            //}
 
             Label notNullLabel = il.DefineLabel();
             // if (obj != null)
@@ -238,11 +331,13 @@ namespace ObjectCloner
             il.Emit(OpCodes.Ldelem_Ref);                    // Obtém o elemento (referência)
 
             // Cria uma nova instância: new ObjetoTesteFilho(obj.Array[ix])
-            DynamicConstructorInfo b1 = null;
-            if (!TypeBuilders.TryGetValue(itemType, out b1))
-            {
-                b1 = Create(itemType);
-            }
+            var b1 = TypeBuilders[itemType];
+            //DynamicConstructorInfo b1 = null;
+            //if (!TypeBuilders.TryGetValue(itemType, out b1))
+            //{
+            //    throw new InvalidOperationException("Tipo não pré-definido: " + itemType.Name);
+            //    //b1 = Create(itemType);
+            //}
             il.Emit(OpCodes.Newobj, b1.Constructor);
             // Armazena o resultado em newArray[ix]
             il.Emit(OpCodes.Stelem_Ref);
@@ -332,12 +427,13 @@ namespace ObjectCloner
             il.Emit(OpCodes.Ldloc, localChild);                            // Carrega a variável a
 
 
-
-            DynamicConstructorInfo b1 = null;
-            if (!TypeBuilders.TryGetValue(item_type, out b1))
-            {
-                b1 = Create(item_type);
-            }
+            var b1 = TypeBuilders[item_type];
+            //DynamicConstructorInfo b1 = null;
+            //if (!TypeBuilders.TryGetValue(item_type, out b1))
+            //{
+            //    throw new InvalidOperationException("Tipo não pré-definido: " + item_type.Name);
+            //    //b1 = Create(item_type);
+            //}
             il.Emit(OpCodes.Newobj, b1.Constructor);                       // Cria new ObjetoTesteFilho(a)
 
             il.EmitCall(OpCodes.Callvirt, list_add, null);                 // Chama Add no List<ObjetoTesteFilho>
@@ -365,21 +461,7 @@ namespace ObjectCloner
         }
 
 
-        internal static DynamicConstructorInfo DefineConstructor(Type baseType)
-        {
-            if (TypeBuilders.TryGetValue(baseType, out DynamicConstructorInfo tt)) return tt;
-
-            var builder = Module.DefineType(baseType.Name + "_Dynamic", TypeAttributes.Public, baseType);
-
-            var dci = new DynamicConstructorInfo()
-            {
-                Builder = builder,
-                OriginalType = baseType,
-                Constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { baseType })
-            };
-            TypeBuilders.Add(baseType, dci);
-            return dci;
-        }
+       
 
 
         private static Dictionary<Type, DynamicConstructorInfo> TypeBuilders;
