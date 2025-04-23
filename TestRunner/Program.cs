@@ -1,4 +1,6 @@
 ﻿using ObjectCloner;
+using System.Diagnostics;
+using System.Globalization;
 using UnitTester;
 
 namespace TestRunner
@@ -30,6 +32,12 @@ namespace TestRunner
                 Name = "GHI...",
                 Parent = new ObjetoTestePai() { ID = 987, Name = "ZZZ...", Options = new[] { new ObjetoTestePai() { ID = 654, Name = "RRR...", Time = t2 } } }
             });
+            pai.Children.Add(new()
+            {
+                ID = 7778,
+                Name = "GHI...",
+                Parent = new ObjetoTestePai() { ID = 89565, Name = "ZZZ...", Options = new[] { new ObjetoTestePai() { ID = 766564, Name = "RRR...", Time = t2 } } }
+            });
 
             pai.Options[0].Children.Add(new ObjetoTestePai() { ID = 4456, Name = "SSSSSS..." });
 
@@ -39,7 +47,33 @@ namespace TestRunner
 
             filho.Dependencies.Add(new ObjetoTestePai() { ID = 3535529, Name = "WRJQDRI...", Time = t3 });
 
+
+            pai.Children[1].Parent = pai;
+
+
             var copy = Cloner.Clone(pai);
+
+            int ix = 0;
+            while(ix < 5)
+            {
+                var copy1 = Cloner.Clone(pai);
+                ix++;
+            }
+
+            var sw = Stopwatch.StartNew();
+            decimal sum = 0;
+            ix = 0;
+            while (ix < 100)
+            {
+                sw.Restart();
+
+                var copy1 = Cloner.Clone(pai);
+
+                sw.Stop();
+                sum += (decimal)sw.Elapsed.TotalMicroseconds;
+                ix++;
+            }
+            var avg = sum / 100.0m;
 
             UnitTest.Assert(() => copy != null);
             UnitTest.Assert(() => copy.ID == 5555 && copy.Name == "ABC..." && copy.Time == now);
@@ -57,6 +91,8 @@ namespace TestRunner
             UnitTest.Assert(() => copy.Elements[0].ID == 87655 && copy.Elements[0].Name == "TTTTT...");
             UnitTest.Assert(() => copy.Elements[0].Dependencies != null && copy.Elements[0].Dependencies.Count == 1);
             UnitTest.Assert(() => copy.Elements[0].Dependencies[0].ID == 3535529 && copy.Elements[0].Dependencies[0].Name == "WRJQDRI..." && copy.Elements[0].Dependencies[0].Time == now);
+
+            Console.WriteLine("Tempo copia do objeto (us): " + avg.ToString("0.000", CultureInfo.InvariantCulture));
         }
 
 
@@ -76,6 +112,29 @@ namespace TestRunner
         public List<ObjetoTestePai> Dependencies { get; set; }
     }
 
+
+    public class ObjetoTestePai2 : ObjetoTestePai
+    {
+        public ObjetoTestePai2(ObjetoTestePai obj, DynamicConstructorInfo info, Dictionary<int, object> instances)
+        {
+            if(obj != null)
+            {
+                ID     = obj.ID;
+                Name   = obj.Name;
+                Parent = (ObjetoTestePai)Cloner.CreateInstance(obj, info, instances);
+
+                if(obj.Options != null)
+                {
+
+                }
+            }
+
+
+          
+        }
+    }
+
+
     public class ObjetoTestePai
     {
         public List<ObjetoTestePai> Children { get; set; }
@@ -85,6 +144,8 @@ namespace TestRunner
         public string Name { get; set; }
         public DateTime Time { get; set; }
         public List<ObjetoTesteFilho> Elements { get; set; }
+
+        
     }
 
 

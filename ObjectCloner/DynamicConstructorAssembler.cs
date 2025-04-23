@@ -8,13 +8,17 @@ namespace ObjectCloner
 
         internal static DynamicConstructorInfo Create(Type baseType)
         {
-            PredefineAllTypes(baseType);
-            GenerateAllIL();
-            FinalizeAllTypes();
+            DynamicConstructorInfo result = null;
 
-            var typeInfo = GetTypeInfo(baseType);
+            if (!TypeBuilders.TryGetValue(baseType, out result))
+            {
+                PredefineAllTypes(baseType);
+                GenerateAllIL();
+                FinalizeAllTypes();
 
-            return typeInfo;
+                result = GetTypeInfo(baseType);
+            }
+            return result;
         }
 
 
@@ -71,21 +75,12 @@ namespace ObjectCloner
             var baset = property.PropertyType;
             var b1 = TypeBuilders[baset];
 
-            Label skipLabel = il.DefineLabel();
-            // Verifica se obj.Property != null
-            il.Emit(OpCodes.Ldarg_1);
-
-            il.Emit(OpCodes.Callvirt, getProperty);
-            il.Emit(OpCodes.Brfalse_S, skipLabel); // Pula se null
-
-            // this.Property = new DynamicType(obj.Property)
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Callvirt, getProperty);
-            il.Emit(OpCodes.Newobj, b1.Constructor);
+            EmitConstructor(il, b1);// il.Emit(OpCodes.Newobj, b1.Constructor);
+            il.Emit(OpCodes.Castclass, property.PropertyType);
             il.Emit(OpCodes.Callvirt, property.GetSetMethod());
-
-            il.MarkLabel(skipLabel);
         }
 
         private static void EmitArrayCopy(ILGenerator il, PropertyInfo source_property)
@@ -169,7 +164,8 @@ namespace ObjectCloner
 
             // new Objeto(obj.Array[ix])
             var b1 = TypeBuilders[itemType];
-            il.Emit(OpCodes.Newobj, b1.Constructor);
+            EmitConstructor(il, b1); //il.Emit(OpCodes.Newobj, b1.Constructor);
+            il.Emit(OpCodes.Castclass, itemType); // Cast para itemType
             il.Emit(OpCodes.Stelem_Ref);
 
             // ix++
@@ -260,8 +256,8 @@ namespace ObjectCloner
 
 
             var b1 = TypeBuilders[item_type];
-            il.Emit(OpCodes.Newobj, b1.Constructor);
-
+            EmitConstructor(il, b1);// il.Emit(OpCodes.Newobj, b1.Constructor);
+            il.Emit(OpCodes.Castclass, item_type);
             il.EmitCall(OpCodes.Callvirt, list_add, null);
 
             // Testa a condição do loop: if (enumerator.MoveNext()) continue;
@@ -368,20 +364,63 @@ namespace ObjectCloner
             }
         }
 
+
+        private static void EmitConstructor(ILGenerator il, DynamicConstructorInfo base_info)
+        {
+            var method = typeof(Cloner).GetMethod
+            (
+                nameof(Cloner.CreateInstance),
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(object), typeof(DynamicConstructorInfo), typeof(Dictionary<int, object>) },
+                null
+            );
+
+            var field = base_info.Helper.GetField("BaseInfo", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+
+            il.Emit(OpCodes.Ldsfld, field);
+            il.Emit(OpCodes.Ldarg_3);
+
+            il.EmitCall(OpCodes.Call, method, null); // faz a chamada: (T) Cloner.CreateInstance<T>(source, instances)
+        }
+
         private static DynamicConstructorInfo DefineConstructor(Type baseType)
         {
             if (TypeBuilders.TryGetValue(baseType, out DynamicConstructorInfo tt)) return tt;
 
             var builder = Module.DefineType(baseType.Name + "_Dynamic", TypeAttributes.Public | TypeAttributes.Class, baseType);
 
+            var dictType = typeof(Dictionary<,>).MakeGenericType(typeof(int), typeof(object));
+
             var dci = new DynamicConstructorInfo()
             {
                 Builder = builder,
                 OriginalType = baseType,
-                Constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { baseType })
+                Constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { baseType, typeof(DynamicConstructorInfo), dictType })
             };
+
+            dci.Helper = CreateHelperTypeWithField(Module, baseType.Name, dci);
+
             TypeBuilders.Add(baseType, dci);
             return dci;
+        }
+
+        private static Type CreateHelperTypeWithField(ModuleBuilder moduleBuilder, string typeName, DynamicConstructorInfo baseInfo)
+        {
+            // Cria um novo tipo auxiliar exclusivo para esse construtor
+            var helperTypeBuilder = moduleBuilder.DefineType($"{typeName}_Helper", TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.BeforeFieldInit);
+
+            // Cria o campo estático públic
+            var fieldBuilder = helperTypeBuilder.DefineField("BaseInfo", typeof(DynamicConstructorInfo), FieldAttributes.Public | FieldAttributes.Static);
+
+            // Cria tipo finalizado
+            var helperType = helperTypeBuilder.CreateType();
+
+            // Atribui o valor do campo
+            FieldInfo fieldInfo = helperType.GetField("BaseInfo", BindingFlags.Static | BindingFlags.Public);
+            fieldInfo.SetValue(null, baseInfo);
+
+            return helperType;
         }
 
 
@@ -400,11 +439,12 @@ namespace ObjectCloner
     }
 
 
-    internal class DynamicConstructorInfo
+    public class DynamicConstructorInfo
     {
         internal Type OriginalType;
         internal TypeBuilder Builder;
-        internal Type BuildedType;
+        public   Type BuildedType;
         internal ConstructorBuilder Constructor;
+        internal Type Helper;
     }
 }
