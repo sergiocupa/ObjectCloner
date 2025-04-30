@@ -49,21 +49,53 @@ namespace TestRunner
 
 
             pai.Children[1].Parent = pai;
+            int SAMPLES = 1000000;
+
+            var sww = Stopwatch.StartNew();
+
+            var instances1 = new Dictionary<int, ObjetoTestePai>();
+            var cp1 = new ObjetoTestePai2(pai, instances1);
+
+            sww.Stop();
+            var t10 = sww.Elapsed.TotalMicroseconds;
+            sww.Restart();
+
+            decimal sum = 0;
+            int ix = 0;
+            while (ix < SAMPLES)
+            {
+                sww.Restart();
+
+                var instances = new Dictionary<int, ObjetoTestePai>();
+
+                var cp2 = new ObjetoTestePai2(pai, instances);
+
+                sww.Stop();
+                sum += (decimal)sww.Elapsed.TotalMicroseconds;
+                ix++;
+            }
+            var avg1 = sum / SAMPLES;
+
+
+
+            sww.Stop();
+            var t11 = sww.Elapsed.TotalMicroseconds;
+            sww.Restart();
 
 
             var copy = Cloner.Clone(pai);
 
-            int ix = 0;
-            while(ix < 5)
+            ix = 0;
+            while(ix < 10)
             {
                 var copy1 = Cloner.Clone(pai);
                 ix++;
             }
 
             var sw = Stopwatch.StartNew();
-            decimal sum = 0;
+            sum = 0.0m;
             ix = 0;
-            while (ix < 100)
+            while (ix < SAMPLES)
             {
                 sw.Restart();
 
@@ -73,7 +105,7 @@ namespace TestRunner
                 sum += (decimal)sw.Elapsed.TotalMicroseconds;
                 ix++;
             }
-            var avg = sum / 100.0m;
+            var avg = sum / SAMPLES;
 
             UnitTest.Assert(() => copy != null);
             UnitTest.Assert(() => copy.ID == 5555 && copy.Name == "ABC..." && copy.Time == now);
@@ -82,7 +114,7 @@ namespace TestRunner
             UnitTest.Assert(() => copy.Options[0].ID == 222 && copy.Options[0].Name == "DEF...");
             UnitTest.Assert(() => copy.Options[0].Children != null && copy.Options[0].Children.Count == 1);
             UnitTest.Assert(() => copy.Options[0].Children[0].ID == 4456 && copy.Options[0].Children[0].Name == "SSSSSS...");
-            UnitTest.Assert(() => copy.Children != null && copy.Children.Count == 1);
+            UnitTest.Assert(() => copy.Children != null && copy.Children.Count == 2);
             UnitTest.Assert(() => copy.Children[0].ID == 7777 && copy.Children[0].Name == "GHI...");
             UnitTest.Assert(() => copy.Children[0].Parent != null && copy.Children[0].Parent.ID == 987 && copy.Children[0].Parent.Name == "ZZZ...");
             UnitTest.Assert(() => copy.Children[0].Parent.Options != null && copy.Children[0].Parent.Options.Length == 1);
@@ -92,7 +124,11 @@ namespace TestRunner
             UnitTest.Assert(() => copy.Elements[0].Dependencies != null && copy.Elements[0].Dependencies.Count == 1);
             UnitTest.Assert(() => copy.Elements[0].Dependencies[0].ID == 3535529 && copy.Elements[0].Dependencies[0].Name == "WRJQDRI..." && copy.Elements[0].Dependencies[0].Time == now);
 
-            Console.WriteLine("Tempo copia do objeto (us): " + avg.ToString("0.000", CultureInfo.InvariantCulture));
+            UnitTest.Assert(() => copy.Children.Count > 1);
+            UnitTest.Assert(() => copy.Children[1].ID == 7778 && copy.Children[1].Name == "GHI...");
+            UnitTest.Assert(() => copy.Children[1].Parent != null && copy.Children[1].Parent.ID == 5555);
+
+            Console.WriteLine("Tempo copia do objeto (Construtor/Clonado) (us): " + avg1.ToString("0.000", CultureInfo.InvariantCulture) + " " +  avg.ToString("0.000", CultureInfo.InvariantCulture));
         }
 
 
@@ -110,27 +146,90 @@ namespace TestRunner
         public int ID { get; set; }
         public string Name { get; set; }
         public List<ObjetoTestePai> Dependencies { get; set; }
+
+
+        public ObjetoTesteFilho(ObjetoTesteFilho a)
+        {
+            if(a != null)
+            {
+                ID = a.ID;
+                Name = a.Name;
+
+                if(a.Dependencies != null)
+                {
+                    Dependencies = new List<ObjetoTestePai>();
+
+                    foreach(var b in  a.Dependencies)
+                    {
+                        Dependencies.Add(b);
+                    }
+                }
+            }
+        }
+
+        public ObjetoTesteFilho()
+        {
+
+        }
+
     }
 
 
     public class ObjetoTestePai2 : ObjetoTestePai
     {
-        public ObjetoTestePai2(ObjetoTestePai obj, DynamicConstructorInfo info, Dictionary<int, object> instances)
+        public ObjetoTestePai2(ObjetoTestePai obj, Dictionary<int, ObjetoTestePai> instances)
         {
-            if(obj != null)
+            if (obj != null)
             {
                 ID     = obj.ID;
                 Name   = obj.Name;
-                Parent = (ObjetoTestePai)Cloner.CreateInstance(obj, info, instances);
+                Time   = obj.Time;
 
-                if(obj.Options != null)
+                if (obj.Parent != null)
                 {
+                    var h1 = obj.Parent.GetHashCode();
+                    if (instances.TryGetValue(h1, out var v1))
+                    {
+                        Parent = v1;
+                    }
+                    else
+                    {
+                        instances.Add(h1, obj.Parent);
+                        Parent = new ObjetoTestePai2(obj.Parent, instances);
+                    }
+                }
+                //Parent = obj.Parent != null ? new ObjetoTestePai2(obj.Parent, instances) : null; 
 
+                if (obj.Children != null)
+                {
+                    Children = new List<ObjetoTestePai>();
+                    foreach (var a in obj.Children)
+                    {
+                        Children.Add(a);
+                    }
+                }
+
+                if (obj.Elements != null)
+                {
+                    Elements = new List<ObjetoTesteFilho>();
+                    foreach (var a in obj.Elements)
+                    {
+                        Elements.Add(new ObjetoTesteFilho(a));
+                    }
+                }
+
+                if (obj.Options != null)
+                {
+                    Options = new ObjetoTestePai[obj.Options.Length];
+
+                    int ix = 0;
+                    while (ix < obj.Options.Length)
+                    {
+                        Options[ix] = new ObjetoTestePai2(obj.Options[ix], instances);
+                        ix++;
+                    }
                 }
             }
-
-
-          
         }
     }
 

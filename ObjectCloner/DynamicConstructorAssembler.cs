@@ -27,7 +27,7 @@ namespace ObjectCloner
             Label notNullLabel = il.DefineLabel();
             // if (obj != null)
             il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Brtrue_S, notNullLabel);
+            il.Emit(OpCodes.Brtrue, notNullLabel);
             // return;
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notNullLabel);
@@ -78,7 +78,9 @@ namespace ObjectCloner
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Callvirt, getProperty);
-            EmitConstructor(il, b1);// il.Emit(OpCodes.Newobj, b1.Constructor);
+
+            EmitSelfReferenceBreakerConstructor(il, b1);
+
             il.Emit(OpCodes.Castclass, property.PropertyType);
             il.Emit(OpCodes.Callvirt, property.GetSetMethod());
         }
@@ -107,7 +109,7 @@ namespace ObjectCloner
             // if (obj.Array != null && obj.Array.Length > 0)
             il.Emit(OpCodes.Ldarg_1);
             il.EmitCall(OpCodes.Callvirt, getArray, null);
-            il.Emit(OpCodes.Brfalse_S, labelIfFalse);
+            il.Emit(OpCodes.Brfalse, labelIfFalse);
 
             // Se não for nulo, carrega obj.Array novamente e obtém seu comprimento.
             il.Emit(OpCodes.Ldarg_1);
@@ -116,7 +118,7 @@ namespace ObjectCloner
             il.Emit(OpCodes.Conv_I4);
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Cgt_Un);
-            il.Emit(OpCodes.Br_S, labelAfterTest);
+            il.Emit(OpCodes.Br, labelAfterTest);
 
             // Se obj.Array era nulo, define 0.
             il.MarkLabel(labelIfFalse);
@@ -128,7 +130,7 @@ namespace ObjectCloner
 
             // Se o teste for falso (0), sai do método.
             il.Emit(OpCodes.Ldloc, condition);
-            il.Emit(OpCodes.Brfalse_S, labelExit);
+            il.Emit(OpCodes.Brfalse, labelExit);
 
             // Array = new ObjetoTesteFilho[obj.Array.Length];
             il.Emit(OpCodes.Ldarg_1);
@@ -148,7 +150,7 @@ namespace ObjectCloner
             il.Emit(OpCodes.Stloc, index);
 
             // while (ix < obj.Array.Length)
-            il.Emit(OpCodes.Br_S, labelLoopCheck);
+            il.Emit(OpCodes.Br, labelLoopCheck);
 
             il.MarkLabel(labelLoopStart);
 
@@ -162,10 +164,11 @@ namespace ObjectCloner
             il.Emit(OpCodes.Ldloc, index);
             il.Emit(OpCodes.Ldelem_Ref);
 
+            il.Emit(OpCodes.Ldarg_2);            // Carregar instances
+
             // new Objeto(obj.Array[ix])
             var b1 = TypeBuilders[itemType];
-            EmitConstructor(il, b1); //il.Emit(OpCodes.Newobj, b1.Constructor);
-            il.Emit(OpCodes.Castclass, itemType); // Cast para itemType
+            il.Emit(OpCodes.Newobj, b1.Constructor);
             il.Emit(OpCodes.Stelem_Ref);
 
             // ix++
@@ -184,7 +187,7 @@ namespace ObjectCloner
             il.Emit(OpCodes.Clt);                           // (ix < length) ? 1 : 0
             il.Emit(OpCodes.Stloc, loopCond);
             il.Emit(OpCodes.Ldloc, loopCond);
-            il.Emit(OpCodes.Brtrue_S, labelLoopStart);      // Se true, repete o loop
+            il.Emit(OpCodes.Brtrue, labelLoopStart);      // Se true, repete o loop
 
             il.MarkLabel(labelExit);
         }
@@ -215,8 +218,8 @@ namespace ObjectCloner
             Label endLabel = il.DefineLabel();
 
             il.Emit(OpCodes.Ldloc, localHasChildren);
-            il.Emit(OpCodes.Brtrue_S, continueLabel);
-            il.Emit(OpCodes.Br_S, endLabel);
+            il.Emit(OpCodes.Brtrue, continueLabel);
+            il.Emit(OpCodes.Br, endLabel);
 
             // Marca o label para continuação quando não nulo
             il.MarkLabel(continueLabel);
@@ -240,7 +243,7 @@ namespace ObjectCloner
             // Loop: while (enumerator.MoveNext())
             Label loopStart = il.DefineLabel();
             Label loopCheck = il.DefineLabel();
-            il.Emit(OpCodes.Br_S, loopCheck);
+            il.Emit(OpCodes.Br, loopCheck);
 
             il.MarkLabel(loopStart);
             // a = enumerator.Current;
@@ -249,25 +252,26 @@ namespace ObjectCloner
             il.EmitCall(OpCodes.Call, enum_current, null);
             il.Emit(OpCodes.Stloc, localChild);
 
+
             // Children.Add(new ObjetoTesteFilho(a));
             il.Emit(OpCodes.Ldarg_0);
             il.EmitCall(OpCodes.Call, get_child, null);
             il.Emit(OpCodes.Ldloc, localChild);
-
+            il.Emit(OpCodes.Ldarg_2);            // Carregar instances
 
             var b1 = TypeBuilders[item_type];
-            EmitConstructor(il, b1);// il.Emit(OpCodes.Newobj, b1.Constructor);
-            il.Emit(OpCodes.Castclass, item_type);
+            il.Emit(OpCodes.Newobj, b1.Constructor);
             il.EmitCall(OpCodes.Callvirt, list_add, null);
+
 
             // Testa a condição do loop: if (enumerator.MoveNext()) continue;
             il.MarkLabel(loopCheck);
             il.Emit(OpCodes.Ldloca_S, localEnumerator);
             il.EmitCall(OpCodes.Call, enum_move, null);
-            il.Emit(OpCodes.Brtrue_S, loopStart);
+            il.Emit(OpCodes.Brtrue, loopStart);
 
             // Sai do try block: direciona para exitLabel
-            il.Emit(OpCodes.Leave_S, exitLabel);
+            il.Emit(OpCodes.Leave, exitLabel);
 
             // Finally: ((IDisposable)enumerator).Dispose();
             il.BeginFinallyBlock();
@@ -365,24 +369,58 @@ namespace ObjectCloner
         }
 
 
-        private static void EmitConstructor(ILGenerator il, DynamicConstructorInfo base_info)
+        private static void EmitSelfReferenceBreakerConstructor(ILGenerator il, DynamicConstructorInfo base_info)
         {
-            var method = typeof(Cloner).GetMethod
-            (
-                nameof(Cloner.CreateInstance),
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
-                null,
-                new[] { typeof(object), typeof(DynamicConstructorInfo), typeof(Dictionary<int, object>) },
-                null
-            );
+            LocalBuilder itemLocal  = il.DeclareLocal(typeof(object));  // Item a ser clonado
+            LocalBuilder hidLocal   = il.DeclareLocal(typeof(int));      // Hash code do item
+            LocalBuilder existLocal = il.DeclareLocal(typeof(object)); // Instância existente no dicionário
+            LocalBuilder instLocal  = il.DeclareLocal(typeof(object));  // Nova instância criada
 
-            var field = base_info.Helper.GetField("BaseInfo", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            // Definir labels
+            Label labelNotNull = il.DefineLabel();
+            Label labelCreateNew = il.DefineLabel();
+            Label labelEnd = il.DefineLabel();
 
-            il.Emit(OpCodes.Ldsfld, field);
-            il.Emit(OpCodes.Ldarg_3);
+            // Item está na pilha
+            il.Emit(OpCodes.Dup);                // Duplicar para verificar null
+            il.Emit(OpCodes.Brtrue, labelNotNull);
+            il.Emit(OpCodes.Pop);                // Remover item se null
+            il.Emit(OpCodes.Ldnull);             // Deixar null na pilha
+            il.Emit(OpCodes.Br, labelEnd);       // Pular para o fim
 
-            il.EmitCall(OpCodes.Call, method, null); // faz a chamada: (T) Cloner.CreateInstance<T>(source, instances)
+            il.MarkLabel(labelNotNull);
+            il.Emit(OpCodes.Stloc, itemLocal);   // Armazenar item da pilha atual
+            il.Emit(OpCodes.Ldloc, itemLocal);
+            il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetHashCode"));
+            il.Emit(OpCodes.Stloc, hidLocal);    // Armazenar hash code
+
+            il.Emit(OpCodes.Ldarg_2);            // Carregar dicionário (instances)
+            il.Emit(OpCodes.Ldloc, hidLocal);    // Carregar hash code
+            il.Emit(OpCodes.Ldloca, existLocal); // Endereço da variável exist
+            il.Emit(OpCodes.Callvirt, typeof(Dictionary<int, object>).GetMethod("TryGetValue"));
+            il.Emit(OpCodes.Brfalse, labelCreateNew); // Se false, criar nova instância
+
+            // Se TryGetValue retornou true
+            il.Emit(OpCodes.Ldloc, existLocal);  // Carregar instância existente
+            il.Emit(OpCodes.Br, labelEnd);
+
+            //// Criar nova instância
+            il.MarkLabel(labelCreateNew);
+
+            il.Emit(OpCodes.Ldarg_2);            // Carregar instances
+            il.Emit(OpCodes.Ldloc, hidLocal);    // Carregar hash code
+            il.Emit(OpCodes.Ldloc, itemLocal);   // Carregar item da pilha atual
+            il.Emit(OpCodes.Callvirt, typeof(Dictionary<int, object>).GetMethod("Add")); // Adicionar ao dicionário
+
+            il.Emit(OpCodes.Ldloc, itemLocal);   // Carregar item da pilha atual
+            il.Emit(OpCodes.Ldarg_2);            // Carregar instances
+            il.Emit(OpCodes.Newobj, base_info.Constructor); // Criar nova instância
+            il.Emit(OpCodes.Stloc, instLocal);   // Armazenar nova instância
+
+            il.Emit(OpCodes.Ldloc, instLocal);   // Deixar nova instância na pilha
+            il.MarkLabel(labelEnd);
         }
+
 
         private static DynamicConstructorInfo DefineConstructor(Type baseType)
         {
@@ -396,31 +434,11 @@ namespace ObjectCloner
             {
                 Builder = builder,
                 OriginalType = baseType,
-                Constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { baseType, typeof(DynamicConstructorInfo), dictType })
+                Constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { baseType, dictType })
             };
-
-            dci.Helper = CreateHelperTypeWithField(Module, baseType.Name, dci);
 
             TypeBuilders.Add(baseType, dci);
             return dci;
-        }
-
-        private static Type CreateHelperTypeWithField(ModuleBuilder moduleBuilder, string typeName, DynamicConstructorInfo baseInfo)
-        {
-            // Cria um novo tipo auxiliar exclusivo para esse construtor
-            var helperTypeBuilder = moduleBuilder.DefineType($"{typeName}_Helper", TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.BeforeFieldInit);
-
-            // Cria o campo estático públic
-            var fieldBuilder = helperTypeBuilder.DefineField("BaseInfo", typeof(DynamicConstructorInfo), FieldAttributes.Public | FieldAttributes.Static);
-
-            // Cria tipo finalizado
-            var helperType = helperTypeBuilder.CreateType();
-
-            // Atribui o valor do campo
-            FieldInfo fieldInfo = helperType.GetField("BaseInfo", BindingFlags.Static | BindingFlags.Public);
-            fieldInfo.SetValue(null, baseInfo);
-
-            return helperType;
         }
 
 
@@ -445,6 +463,5 @@ namespace ObjectCloner
         internal TypeBuilder Builder;
         public   Type BuildedType;
         internal ConstructorBuilder Constructor;
-        internal Type Helper;
     }
 }
